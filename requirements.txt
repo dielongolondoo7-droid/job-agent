@@ -1,4 +1,4 @@
-name: Agente de Empleo — Diego Londoño
+name: Agente de Empleo — Diego
 
 on:
   schedule:
