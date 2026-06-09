@@ -11,9 +11,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # ── CONFIGURACIÓN ──────────────────────────────
-GMAIL_USER     = os.environ["GMAIL_USER"]          # dielongo.londoo7@gmail.com
+GMAIL_USER     = os.environ["GMAIL_USER"]          # 
 GMAIL_APP_PASS = os.environ["GMAIL_APP_PASSWORD"]  # App Password de Google
-DESTINATARIO   = "dielongo.londoo7@gmail.com"
+DESTINATARIO   = "neutrondjym@gmail.com"
 # ───────────────────────────────────────────────
 
 ESTADO_EMOJI = {
