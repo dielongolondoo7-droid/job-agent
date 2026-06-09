@@ -1,5 +1,5 @@
 """
-scorer.py — Motor de filtrado y scoring para el agente de empleo de Diego Londoño
+scorer.py — Motor de filtrado y scoring para el agente de empleo de Diego
 Score 0-100. Umbral de aplicación automática: >= 75
 """
 
