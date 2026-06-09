@@ -1,167 +1,268 @@
 """
-mailer.py — Envía correo diario con las candidatas del día, ordenadas por score
-Usa Gmail SMTP con App Password (no OAuth — más simple para GitHub Actions)
+scorer.py — Motor de filtrado y scoring para el agente de empleo de Diego Londoño
+Score 0-100. Umbral de aplicación automática: >= 75
 """
 
+import re
 import json
-import os
-import smtplib
-from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-
-# ── CONFIGURACIÓN ──────────────────────────────
-GMAIL_USER     = os.environ["GMAIL_USER"]          # 
-GMAIL_APP_PASS = os.environ["GMAIL_APP_PASSWORD"]  # App Password de Google
-DESTINATARIO   = "neutrondjym@gmail.com"
-# ───────────────────────────────────────────────
-
-ESTADO_EMOJI = {
-    "🔥 FIT ALTO":  "#d4edda",
-    "👍 FIT MEDIO": "#fff3cd",
-    "⚠️ FIT BAJO":  "#f8d7da",
-}
+from typing import Optional
 
 
-def build_html(aprobadas: list[dict], fecha: str, nuevas: int) -> str:
-    fit_alto  = [j for j in aprobadas if j.get("score", 0) >= 75]
-    fit_medio = [j for j in aprobadas if 50 <= j.get("score", 0) < 75]
+# ──────────────────────────────────────────────
+#  CRITERIOS DE DESCARTE (retorna True si debe descartarse)
+# ──────────────────────────────────────────────
 
-    def render_tabla(jobs: list[dict]) -> str:
-        if not jobs:
-            return "<p style='color:#888;font-style:italic;'>Sin ofertas en esta categoría hoy.</p>"
-        rows = ""
-        for j in jobs:
-            color = ESTADO_EMOJI.get(j.get("estado", ""), "#ffffff")
-            url = j.get("url", "#")
-            link = f'<a href="{url}" style="color:#1a73e8;text-decoration:none;">Ver oferta →</a>' if url != "#" else "—"
-            rows += f"""
-            <tr style="background:{color}">
-                <td style="padding:8px 12px;font-weight:600;">{j.get('score',0)}</td>
-                <td style="padding:8px 12px;">{j.get('cargo','')}</td>
-                <td style="padding:8px 12px;">{j.get('empresa','')}</td>
-                <td style="padding:8px 12px;">{j.get('ciudad','')}</td>
-                <td style="padding:8px 12px;">{j.get('salario','') or '—'}</td>
-                <td style="padding:8px 12px;">{j.get('modalidad', j.get('contrato','')) or '—'}</td>
-                <td style="padding:8px 12px;">{link}</td>
-            </tr>"""
-        return f"""
-        <table width="100%" cellpadding="0" cellspacing="0" 
-               style="border-collapse:collapse;font-size:13px;font-family:Arial,sans-serif;">
-            <thead>
-                <tr style="background:#2c3e50;color:white;">
-                    <th style="padding:10px 12px;text-align:left;">Score</th>
-                    <th style="padding:10px 12px;text-align:left;">Cargo</th>
-                    <th style="padding:10px 12px;text-align:left;">Empresa</th>
-                    <th style="padding:10px 12px;text-align:left;">Ciudad</th>
-                    <th style="padding:10px 12px;text-align:left;">Salario</th>
-                    <th style="padding:10px 12px;text-align:left;">Modalidad</th>
-                    <th style="padding:10px 12px;text-align:left;">Enlace</th>
-                </tr>
-            </thead>
-            <tbody>{rows}</tbody>
-        </table>"""
+# Palabras que implican nivel auxiliar/asistente
+NIVEL_BAJO = re.compile(
+    r"\b(auxiliar|asistente|aprendiz|practicante|pasante|intern|junior\s*contable)\b",
+    re.IGNORECASE
+)
 
-    html = f"""<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0">
-<tr><td style="padding:20px;">
+# Inglés excluyente B2 o superior
+INGLES_ALTO = re.compile(
+    r"\b(inglés|ingles|english)\b.{0,60}(b2|c1|c2|avanzado|fluido|fluente|fluent|advanced)",
+    re.IGNORECASE
+)
+INGLES_ALTO_INV = re.compile(
+    r"\b(b2|c1|c2|avanzado|fluido)\b.{0,30}(inglés|ingles|english)",
+    re.IGNORECASE
+)
 
-  <!-- HEADER -->
-  <table width="640" align="center" cellpadding="0" cellspacing="0"
-         style="background:#2c3e50;border-radius:8px 8px 0 0;">
-    <tr>
-      <td style="padding:24px 32px;">
-        <h1 style="color:white;margin:0;font-size:22px;">📋 Agente de Empleo</h1>
-        <p style="color:#aab7c4;margin:6px 0 0;font-size:14px;">
-          {fecha} · {nuevas} ofertas nuevas hoy · 
-          {len(fit_alto)} FIT ALTO · {len(fit_medio)} FIT MEDIO
-        </p>
-      </td>
-    </tr>
-  </table>
+# Especialización excluyente
+ESPECIALIZACION_EXCLUYENTE = re.compile(
+    r"(especialización|maestría|posgrado|magíster).{0,40}(requerida|obligatoria|excluyente|indispensable|requisito)",
+    re.IGNORECASE
+)
 
-  <!-- BODY -->
-  <table width="640" align="center" cellpadding="0" cellspacing="0"
-         style="background:white;border:1px solid #e0e0e0;border-top:none;">
-    <tr><td style="padding:24px 32px;">
+# Contrato obra/labor
+OBRA_LABOR = re.compile(
+    r"\b(obra\s*y?\s*labor|obra\s*o\s*labor|contrato\s*de\s*obra)\b",
+    re.IGNORECASE
+)
 
-      <!-- SECCIÓN FIT ALTO -->
-      <h2 style="color:#27ae60;border-bottom:2px solid #27ae60;padding-bottom:8px;
-                 font-size:16px;margin-top:0;">
-        🔥 FIT ALTO — Score ≥ 75 ({len(fit_alto)} ofertas)
-      </h2>
-      {render_tabla(fit_alto)}
+# Salario muy bajo (detecta salarios explícitos < 3M)
+SALARIO_BAJO = re.compile(
+    r"\$?\s*([1-2][,.]?\d{3}[,.]?\d{3}|\d{7})\b"  # 1M-2.9M explícito
+)
 
-      <div style="height:24px;"></div>
+# Ciudades fuera del radio (presencial exigido)
+CIUDADES_FUERA_RADIO = re.compile(
+    r"\b(bogotá|bogota|medellín|medellin|cali|barranquilla|cartagena|bucaramanga|"
+    r"santa marta|cúcuta|cucuta|villavicencio|pasto|neiva|montería|sincelejo)\b",
+    re.IGNORECASE
+)
 
-      <!-- SECCIÓN FIT MEDIO -->
-      <h2 style="color:#e67e22;border-bottom:2px solid #e67e22;padding-bottom:8px;
-                 font-size:16px;">
-        👍 FIT MEDIO — Score 50-74 ({len(fit_medio)} ofertas)
-      </h2>
-      {render_tabla(fit_medio)}
+PRESENCIAL_EXCLUYENTE = re.compile(
+    r"\b(presencial|on-?site|en sitio)\b",
+    re.IGNORECASE
+)
 
-    </td></tr>
-  </table>
+REMOTO_KEYWORDS = re.compile(
+    r"\b(remoto|remote|teletrabajo|trabajo\s*desde\s*casa|home\s*office|híbrido|hibrido|virtual)\b",
+    re.IGNORECASE
+)
 
-  <!-- FOOTER -->
-  <table width="640" align="center" cellpadding="0" cellspacing="0"
-         style="background:#ecf0f1;border:1px solid #e0e0e0;border-top:none;
-                border-radius:0 0 8px 8px;">
-    <tr>
-      <td style="padding:16px 32px;font-size:12px;color:#7f8c8d;">
-        <strong>Criterios de descarte activos:</strong> auxiliares, obra/labor, 
-        inglés B2+, especialización excluyente, presencial fuera del radio definido.<br>
-        <strong>Portales:</strong> Computrabajo Colombia · El Empleo<br>
-        <strong>Radio geográfico:</strong> Armenia · Pereira · Manizales · Ibagué · Remoto Colombia
-      </td>
-    </tr>
-  </table>
-
-</td></tr>
-</table>
-</body>
-</html>"""
-    return html
+EJE_CAFETERO = re.compile(
+    r"\b(armenia|pereira|manizales|dosquebradas|ibagué|ibague|quindío|quindio|risaralda|caldas|tolima)\b",
+    re.IGNORECASE
+)
 
 
-def send_email(aprobadas: list[dict], nuevas: int):
-    fecha = datetime.now().strftime("%d/%m/%Y")
-    fit_alto_count = sum(1 for j in aprobadas if j.get("score", 0) >= 75)
+def debe_descartar(texto: str, salario_raw: str = "", ciudad: str = "", contrato: str = "") -> tuple[bool, str]:
+    """
+    Retorna (descartar: bool, razon: str)
+    Texto debe ser la concatenación de cargo + descripción.
+    """
+    full = f"{texto} {salario_raw} {ciudad} {contrato}"
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = (
-        f"[Empleo] {fecha} · {nuevas} nuevas · {fit_alto_count} FIT ALTO"
+    if NIVEL_BAJO.search(texto):
+        return True, "Nivel auxiliar/asistente"
+
+    if OBRA_LABOR.search(full):
+        return True, "Contrato obra/labor"
+
+    if INGLES_ALTO.search(full) or INGLES_ALTO_INV.search(full):
+        return True, "Inglés B2+ excluyente"
+
+    if ESPECIALIZACION_EXCLUYENTE.search(full):
+        return True, "Especialización excluyente"
+
+    # Solo descarta por ciudad si menciona presencial Y ciudad fuera del radio Y no menciona remoto
+    if (CIUDADES_FUERA_RADIO.search(ciudad) and
+            PRESENCIAL_EXCLUYENTE.search(full) and
+            not REMOTO_KEYWORDS.search(full)):
+        return True, f"Presencial fuera del radio: {ciudad}"
+
+    # Salario explícito bajo
+    salario_match = SALARIO_BAJO.search(salario_raw)
+    if salario_match:
+        raw = re.sub(r"[,\.]", "", salario_match.group(1))
+        try:
+            valor = int(raw)
+            if valor < 3_000_000:
+                return True, f"Salario explícito < $3M: ${valor:,}"
+        except ValueError:
+            pass
+
+    return False, ""
+
+
+# ──────────────────────────────────────────────
+#  SCORING (0-100)
+# ──────────────────────────────────────────────
+
+TRIBUTARIA = re.compile(
+    r"\b(tributari|iva|retención|retencion|ica|exógena|exogena|dian|impuesto|fiscal|"
+    r"declaración de renta|información exógena|renta)\b",
+    re.IGNORECASE
+)
+
+CONTRATO_INDEFINIDO = re.compile(
+    r"\b(indefinido|término indefinido|termino indefinido|fijo largo|permanent)\b",
+    re.IGNORECASE
+)
+
+SALARIO_ALTO = re.compile(
+    r"\$?\s*(3[,\.]?[5-9]\d{2}[,\.]?\d{3}|[4-9][,\.]?\d{3}[,\.]?\d{3})",
+    re.IGNORECASE
+)
+
+REVISOR_FISCAL = re.compile(
+    r"\b(revisor.{0,5}fiscal|auditor.{0,5}interno|auditoría)\b",
+    re.IGNORECASE
+)
+
+MULTIEMPRESA = re.compile(
+    r"\b(outsourcing|multiempresa|varias empresas|clientes|portafolio de empresas|"
+    r"firma contable|firma de contadores)\b",
+    re.IGNORECASE
+)
+
+
+def score_oferta(job: dict) -> int:
+    """
+    Retorna score 0-100 basado en perfil de Diego.
+    
+    Pesos:
+      +25  Tributaria colombiana mencionada
+      +20  Remoto o eje cafetero
+      +20  Salario >= 3.5M explícito (si no se menciona, +10 beneficio de la duda)
+      +15  Contrato indefinido
+      +10  Sin inglés requerido
+      +10  Sin especialización excluyente
+      Bonus:
+      +5   Revisoría fiscal / auditoría mencionada
+      +5   Multiempresa / outsourcing (fit natural con perfil)
+    """
+    texto = f"{job.get('cargo','')} {job.get('descripcion','')} {job.get('contrato','')}"
+    salario_raw = job.get("salario", "")
+    ciudad = job.get("ciudad", "")
+    score = 0
+
+    # +25: Tributaria
+    if TRIBUTARIA.search(texto):
+        score += 25
+
+    # +20: Modalidad/ubicación
+    if REMOTO_KEYWORDS.search(texto):
+        score += 20
+    elif EJE_CAFETERO.search(ciudad) or EJE_CAFETERO.search(texto):
+        score += 20
+
+    # +20: Salario (si es explícito y >= 3.5M) o +10 si no se menciona
+    if SALARIO_ALTO.search(salario_raw):
+        score += 20
+    elif not salario_raw.strip():
+        score += 10  # beneficio de la duda
+
+    # +15: Contrato indefinido
+    if CONTRATO_INDEFINIDO.search(texto):
+        score += 15
+
+    # +10: Sin inglés requerido
+    ingles_mencionado = re.search(r"\b(inglés|ingles|english)\b", texto, re.IGNORECASE)
+    if not ingles_mencionado:
+        score += 10
+
+    # +10: Sin especialización excluyente (ya filtrado, pero suma si no se menciona en absoluto)
+    especializacion_mencionada = re.search(
+        r"\b(especialización|maestría|posgrado)\b", texto, re.IGNORECASE
     )
-    msg["From"]    = GMAIL_USER
-    msg["To"]      = DESTINATARIO
+    if not especializacion_mencionada:
+        score += 10
 
-    # Plain text fallback
-    plain = f"Agente de empleo — {fecha}\n"
-    plain += f"{nuevas} ofertas nuevas | {fit_alto_count} FIT ALTO\n\n"
-    for j in aprobadas[:10]:
-        plain += f"[{j['score']}] {j['cargo']} @ {j['empresa']} — {j['ciudad']}\n"
-        plain += f"  {j.get('url','')}\n\n"
+    # Bonus +5: Revisoría fiscal / auditoría
+    if REVISOR_FISCAL.search(texto):
+        score += 5
 
-    html = build_html(aprobadas, fecha, nuevas)
+    # Bonus +5: Outsourcing / multiempresa
+    if MULTIEMPRESA.search(texto):
+        score += 5
 
-    msg.attach(MIMEText(plain, "plain", "utf-8"))
-    msg.attach(MIMEText(html, "html", "utf-8"))
+    return min(score, 100)
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(GMAIL_USER, GMAIL_APP_PASS)
-        server.sendmail(GMAIL_USER, DESTINATARIO, msg.as_string())
 
-    print(f"[INFO] Email enviado a {DESTINATARIO}: {nuevas} nuevas, {fit_alto_count} FIT ALTO")
+def clasificar_estado(score: int) -> str:
+    if score >= 75:
+        return "🔥 FIT ALTO"
+    elif score >= 50:
+        return "👍 FIT MEDIO"
+    else:
+        return "⚠️ FIT BAJO"
+
+
+# ──────────────────────────────────────────────
+#  PIPELINE COMPLETO
+# ──────────────────────────────────────────────
+
+def procesar_jobs(jobs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """
+    Retorna (aprobadas, descartadas)
+    Agrega campos: score, estado, razon_descarte
+    """
+    aprobadas = []
+    descartadas = []
+
+    for job in jobs:
+        texto = f"{job.get('cargo','')} {job.get('descripcion','')}"
+        descarte, razon = debe_descartar(
+            texto,
+            job.get("salario", ""),
+            job.get("ciudad", ""),
+            job.get("contrato", "")
+        )
+
+        if descarte:
+            job["score"] = 0
+            job["estado"] = "❌ DESCARTADA"
+            job["razon_descarte"] = razon
+            descartadas.append(job)
+        else:
+            job["score"] = score_oferta(job)
+            job["estado"] = clasificar_estado(job["score"])
+            job["razon_descarte"] = ""
+            aprobadas.append(job)
+
+    # Ordenar por score descendente
+    aprobadas.sort(key=lambda x: x["score"], reverse=True)
+    return aprobadas, descartadas
 
 
 if __name__ == "__main__":
-    with open("jobs_scored.json", encoding="utf-8") as f:
-        data = json.load(f)
-    with open("write_result.json", encoding="utf-8") as f:
-        result = json.load(f)
+    with open("jobs_raw.json", encoding="utf-8") as f:
+        jobs = json.load(f)
 
-    send_email(data["aprobadas"], result["nuevas"])
+    aprobadas, descartadas = procesar_jobs(jobs)
+
+    print(f"\n{'='*50}")
+    print(f"RESULTADOS: {len(aprobadas)} aprobadas | {len(descartadas)} descartadas")
+    print(f"FIT ALTO (>=75): {sum(1 for j in aprobadas if j['score'] >= 75)}")
+    print(f"{'='*50}\n")
+
+    for job in aprobadas[:5]:
+        print(f"[{job['score']}] {job['cargo']} @ {job['empresa']} — {job['ciudad']}")
+
+    with open("jobs_scored.json", "w", encoding="utf-8") as f:
+        json.dump({"aprobadas": aprobadas, "descartadas": descartadas}, f,
+                  ensure_ascii=False, indent=2)
+    print("\n[INFO] jobs_scored.json guardado.")
