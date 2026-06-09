@@ -1,5 +1,5 @@
 """
-scraper.py — Agente de empleo para Diego Londoño
+scraper.py — Agente de empleo para Diego
 Portales: Computrabajo Colombia, El Empleo
 Ejecuta en GitHub Actions diariamente ~6am COL (11 UTC)
 """
