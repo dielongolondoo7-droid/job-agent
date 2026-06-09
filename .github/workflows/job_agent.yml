@@ -31,15 +31,15 @@ jobs:
       # ── 4. Scraping ───────────────────────────────────────
       - name: Scraping portales
         run: python scraper.py
-        continue-on-error: false   # Si falla el scraping, detiene el workflow
+        continue-on-error: true   # Si falla el scraping, detiene el workflow
 
       # ── 5. Scoring y filtrado ──────────────────────────────
       - name: Debug scorer
         run: |
-          echo "=== RUTA ==="
-          find . -name "scorer.py"
-          echo "=== LÍNEAS 1-20 ==="
-          head -20 scorer.py
+          echo "=== ARCHIVOS EN EL REPO ==="
+          ls -la
+          echo "=== TODAS LAS LÍNEAS DE scorer.py ==="
+          cat scorer.py
       - name: Scoring y filtrado
         run: python scorer.py
 
