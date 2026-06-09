@@ -11,10 +11,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ── CONFIGURACIÓN ──────────────────────────────
-SPREADSHEET_ID   = os.environ["SPREADSHEET_ID"]        # ID del Google Sheet
+SPREADSHEET_ID   = os.environ.get("SPREADSHEET_ID", "")        # ID del Google Sheet
 SHEET_NAME       = "Pipeline"                           # Nombre de la pestaña
 SHEET_DESCARTE   = "Descartadas"
-SERVICE_ACCOUNT  = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]  # JSON completo como secret
+SERVICE_ACCOUNT  = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")  # JSON completo como secret
 # ───────────────────────────────────────────────
 
 SCOPES = [
