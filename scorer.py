@@ -126,7 +126,7 @@ def debe_descartar(texto: str, salario_raw: str = "", ciudad: str = "", contrato
             pass
 
     # Cargo que no es rol contable
-    if CARGO_NO_CONTABLE.search(job.get("cargo", "") if isinstance(job, dict) else texto):
+    if CARGO_NO_CONTABLE.search(job.get("cargo"):
         return True, "Cargo no contable"
 
     # Contador Junior
