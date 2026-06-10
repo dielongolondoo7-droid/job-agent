@@ -34,9 +34,30 @@ ESPECIALIZACION_EXCLUYENTE = re.compile(
     re.IGNORECASE
 )
 
-# Contrato obra/labor
-OBRA_LABOR = re.compile(
+# Contrato obra/
+OBRA_ = re.compile(
     r"\b(obra\s*y?\s*labor|obra\s*o\s*labor|contrato\s*de\s*obra)\b",
+    re.IGNORECASE
+)
+
+# Cargos que no son contables aunque mencionen "financiero"
+CARGO_NO_CONTABLE = re.compile(
+    r"^(asesor\s*(comercial|externo|de\s*cobranza|libranza|microcr[eé]dito)|"
+    r"ejecutivo\s*comercial|promotor|analista\s*(de\s*)?(fraude|riesgo|trazabilidad|"
+    r"pqr|kpi|cartera|cr[eé]dito|cuentas\s*m[eé]dicas|transporte|cobranza)|"
+    r"t[eé]cnico\s*de\s*mantenimiento|quickbooks|senior\s*accountant\s*us)\b",
+    re.IGNORECASE
+)
+
+# Contador Junior — nivel insuficiente para el perfil
+CONTADOR_JUNIOR = re.compile(
+    r"\b(contador\s*junior|contable\s*junior)\b",
+    re.IGNORECASE
+)
+
+# Ciudades presenciales que no son el radio objetivo
+CIUDADES_PRESENCIAL_FUERA = re.compile(
+    r"\b(bogot[aá]|medell[ií]n|barranquilla|cali|bucaramanga|cartagena)\b",
     re.IGNORECASE
 )
 
@@ -68,7 +89,7 @@ EJE_CAFETERO = re.compile(
 )
 
 
-def debe_descartar(texto: str, salario_raw: str = "", ciudad: str = "", contrato: str = "") -> tuple[bool, str]:
+def debe_descartar(texto: str, salario_raw: str = "", ciudad: str = "", contrato: str = "", cargo: str = "") -> tuple[bool, str]:
     """
     Retorna (descartar: bool, razon: str)
     Texto debe ser la concatenación de cargo + descripción.
@@ -103,6 +124,21 @@ def debe_descartar(texto: str, salario_raw: str = "", ciudad: str = "", contrato
                 return True, f"Salario explícito < $3M: ${valor:,}"
         except ValueError:
             pass
+
+    # Cargo que no es rol contable
+    if CARGO_NO_CONTABLE.search(job.get("cargo", "") if isinstance(job, dict) else texto):
+        return True, "Cargo no contable"
+
+    # Contador Junior
+    cargo = job.get("cargo", "") if isinstance(job, dict) else texto
+    if CONTADOR_JUNIOR.search(cargo):
+        return True, "Contador Junior — nivel bajo"
+
+    # Ciudad "colombia" pero oferta presencial en Bogotá/Medellín
+    if (ciudad == "colombia" and
+            CIUDADES_PRESENCIAL_FUERA.search(texto) and
+            not REMOTO_KEYWORDS.search(texto)):
+        return True, "Presencial fuera del radio (sin indicar remoto)"
 
     return False, ""
 
@@ -230,6 +266,7 @@ def procesar_jobs(jobs: list[dict]) -> tuple[list[dict], list[dict]]:
             job.get("salario", ""),
             job.get("ciudad", ""),
             job.get("contrato", "")
+            job.get("cargo", "")   # ← agregar este argumento
         )
 
         if descarte:
