@@ -1,5 +1,5 @@
 """
-scorer.py — Motor de filtrado y scoring para el agente de empleo de Diego
+scorer.py — Motor de filtrado y scoring para el agente de empleo de Diego Londoño
 Score 0-100. Umbral de aplicación automática: >= 75
 """
 
@@ -9,16 +9,19 @@ from typing import Optional
 
 
 # ──────────────────────────────────────────────
-#  CRITERIOS DE DESCARTE (retorna True si debe descartarse)
+#  CRITERIOS DE DESCARTE
 # ──────────────────────────────────────────────
 
-# Palabras que implican nivel auxiliar/asistente
 NIVEL_BAJO = re.compile(
     r"\b(auxiliar|asistente|aprendiz|practicante|pasante|intern|junior\s*contable)\b",
     re.IGNORECASE
 )
 
-# Inglés excluyente B2 o superior
+CONTADOR_JUNIOR = re.compile(
+    r"\b(contador\s*junior|contable\s*junior)\b",
+    re.IGNORECASE
+)
+
 INGLES_ALTO = re.compile(
     r"\b(inglés|ingles|english)\b.{0,60}(b2|c1|c2|avanzado|fluido|fluente|fluent|advanced)",
     re.IGNORECASE
@@ -28,45 +31,20 @@ INGLES_ALTO_INV = re.compile(
     re.IGNORECASE
 )
 
-# Especialización excluyente
 ESPECIALIZACION_EXCLUYENTE = re.compile(
     r"(especialización|maestría|posgrado|magíster).{0,40}(requerida|obligatoria|excluyente|indispensable|requisito)",
     re.IGNORECASE
 )
 
-# Contrato obra/
 OBRA_LABOR = re.compile(
     r"\b(obra\s*y?\s*labor|obra\s*o\s*labor|contrato\s*de\s*obra)\b",
     re.IGNORECASE
 )
 
-# Cargos que no son contables aunque mencionen "financiero"
-CARGO_NO_CONTABLE = re.compile(
-    r"^(asesor\s*(comercial|externo|de\s*cobranza|libranza|microcr[eé]dito)|"
-    r"ejecutivo\s*comercial|promotor|analista\s*(de\s*)?(fraude|riesgo|trazabilidad|"
-    r"pqr|kpi|cartera|cr[eé]dito|cuentas\s*m[eé]dicas|transporte|cobranza)|"
-    r"t[eé]cnico\s*de\s*mantenimiento|quickbooks|senior\s*accountant\s*us)\b",
-    re.IGNORECASE
-)
-
-# Contador Junior — nivel insuficiente para el perfil
-CONTADOR_JUNIOR = re.compile(
-    r"\b(contador\s*junior|contable\s*junior)\b",
-    re.IGNORECASE
-)
-
-# Ciudades presenciales que no son el radio objetivo
-CIUDADES_PRESENCIAL_FUERA = re.compile(
-    r"\b(bogot[aá]|medell[ií]n|barranquilla|cali|bucaramanga|cartagena)\b",
-    re.IGNORECASE
-)
-
-# Salario muy bajo (detecta salarios explícitos < 3M)
 SALARIO_BAJO = re.compile(
-    r"\$?\s*([1-2][,.]?\d{3}[,.]?\d{3}|\d{7})\b"  # 1M-2.9M explícito
+    r"\$?\s*([1-2][,.]?\d{3}[,.]?\d{3}|\d{7})\b"
 )
 
-# Ciudades fuera del radio (presencial exigido)
 CIUDADES_FUERA_RADIO = re.compile(
     r"\b(bogotá|bogota|medellín|medellin|cali|barranquilla|cartagena|bucaramanga|"
     r"santa marta|cúcuta|cucuta|villavicencio|pasto|neiva|montería|sincelejo)\b",
@@ -88,31 +66,67 @@ EJE_CAFETERO = re.compile(
     re.IGNORECASE
 )
 
+# Cargos que no son roles contables aunque mencionen "financiero"
+CARGO_NO_CONTABLE = re.compile(
+    r"^(asesor\s*(comercial|externo|de\s*cobranza|libranza|microcr[eé]dito)|"
+    r"ejecutivo\s*comercial|promotor|analista\s*(de\s*)?(fraude|riesgo|trazabilidad|"
+    r"pqr|kpi|cartera|cr[eé]dito|cuentas\s*m[eé]dicas|transporte|cobranza|nomina|nómina)|"
+    r"t[eé]cnico\s*de\s*mantenimiento|quickbooks\s*senior|senior\s*accountant\s*us|"
+    r"assistant\s*manager\s*accounting)\b",
+    re.IGNORECASE
+)
 
-def debe_descartar(texto: str, salario_raw: str = "", ciudad: str = "", contrato: str = "", cargo: str = "") -> tuple[bool, str]:
+# Ciudades presenciales fuera del radio cuando ciudad="colombia"
+CIUDADES_PRESENCIAL_FUERA = re.compile(
+    r"\b(bogot[aá]|medell[ií]n|barranquilla|cali|bucaramanga|cartagena)\b",
+    re.IGNORECASE
+)
+
+
+def debe_descartar(texto: str, salario_raw: str = "", ciudad: str = "",
+                   contrato: str = "", cargo: str = "") -> tuple[bool, str]:
     """
     Retorna (descartar: bool, razon: str)
-    Texto debe ser la concatenación de cargo + descripción.
+    texto = cargo + descripcion concatenados
+    cargo = campo cargo por separado para filtros exactos
     """
     full = f"{texto} {salario_raw} {ciudad} {contrato}"
 
+    # Cargo no contable (evalúa solo el título del cargo)
+    if CARGO_NO_CONTABLE.search(cargo):
+        return True, "Cargo no contable"
+
+    # Nivel bajo
     if NIVEL_BAJO.search(texto):
         return True, "Nivel auxiliar/asistente"
 
+    # Contador Junior
+    if CONTADOR_JUNIOR.search(cargo):
+        return True, "Contador Junior — nivel bajo"
+
+    # Obra/labor
     if OBRA_LABOR.search(full):
         return True, "Contrato obra/labor"
 
+    # Inglés B2+
     if INGLES_ALTO.search(full) or INGLES_ALTO_INV.search(full):
         return True, "Inglés B2+ excluyente"
 
+    # Especialización excluyente
     if ESPECIALIZACION_EXCLUYENTE.search(full):
         return True, "Especialización excluyente"
 
-    # Solo descarta por ciudad si menciona presencial Y ciudad fuera del radio Y no menciona remoto
+    # Presencial fuera del radio geográfico
     if (CIUDADES_FUERA_RADIO.search(ciudad) and
             PRESENCIAL_EXCLUYENTE.search(full) and
             not REMOTO_KEYWORDS.search(full)):
         return True, f"Presencial fuera del radio: {ciudad}"
+
+    # Ciudad "colombia" pero oferta presencial en Bogotá/Medellín sin indicar remoto
+    if (ciudad == "colombia" and
+            CIUDADES_PRESENCIAL_FUERA.search(texto) and
+            not REMOTO_KEYWORDS.search(texto)):
+        return True, "Presencial fuera del radio (sin remoto)"
 
     # Salario explícito bajo
     salario_match = SALARIO_BAJO.search(salario_raw)
@@ -124,21 +138,6 @@ def debe_descartar(texto: str, salario_raw: str = "", ciudad: str = "", contrato
                 return True, f"Salario explícito < $3M: ${valor:,}"
         except ValueError:
             pass
-
-    # Cargo que no es rol contable
-    if CARGO_NO_CONTABLE.search(cargo):
-        return True, "Cargo no contable"
-
-    # Contador Junior
-    cargo = job.get("cargo", "") if isinstance(job, dict) else texto
-    if CONTADOR_JUNIOR.search(cargo):
-        return True, "Contador Junior — nivel bajo"
-
-    # Ciudad "colombia" pero oferta presencial en Bogotá/Medellín
-    if (ciudad == "colombia" and
-            CIUDADES_PRESENCIAL_FUERA.search(texto) and
-            not REMOTO_KEYWORDS.search(texto)):
-        return True, "Presencial fuera del radio (sin indicar remoto)"
 
     return False, ""
 
@@ -176,62 +175,40 @@ MULTIEMPRESA = re.compile(
 
 
 def score_oferta(job: dict) -> int:
-    """
-    Retorna score 0-100 basado en perfil de Diego.
-    
-    Pesos:
-      +25  Tributaria colombiana mencionada
-      +20  Remoto o eje cafetero
-      +20  Salario >= 3.5M explícito (si no se menciona, +10 beneficio de la duda)
-      +15  Contrato indefinido
-      +10  Sin inglés requerido
-      +10  Sin especialización excluyente
-      Bonus:
-      +5   Revisoría fiscal / auditoría mencionada
-      +5   Multiempresa / outsourcing (fit natural con perfil)
-    """
     texto = f"{job.get('cargo','')} {job.get('descripcion','')} {job.get('contrato','')}"
     salario_raw = job.get("salario", "")
     ciudad = job.get("ciudad", "")
     score = 0
 
-    # +25: Tributaria
     if TRIBUTARIA.search(texto):
         score += 25
 
-    # +20: Modalidad/ubicación
     if REMOTO_KEYWORDS.search(texto):
         score += 20
     elif EJE_CAFETERO.search(ciudad) or EJE_CAFETERO.search(texto):
         score += 20
 
-    # +20: Salario (si es explícito y >= 3.5M) o +10 si no se menciona
     if SALARIO_ALTO.search(salario_raw):
         score += 20
     elif not salario_raw.strip():
-        score += 10  # beneficio de la duda
+        score += 10
 
-    # +15: Contrato indefinido
     if CONTRATO_INDEFINIDO.search(texto):
         score += 15
 
-    # +10: Sin inglés requerido
     ingles_mencionado = re.search(r"\b(inglés|ingles|english)\b", texto, re.IGNORECASE)
     if not ingles_mencionado:
         score += 10
 
-    # +10: Sin especialización excluyente (ya filtrado, pero suma si no se menciona en absoluto)
     especializacion_mencionada = re.search(
         r"\b(especialización|maestría|posgrado)\b", texto, re.IGNORECASE
     )
     if not especializacion_mencionada:
         score += 10
 
-    # Bonus +5: Revisoría fiscal / auditoría
     if REVISOR_FISCAL.search(texto):
         score += 5
 
-    # Bonus +5: Outsourcing / multiempresa
     if MULTIEMPRESA.search(texto):
         score += 5
 
@@ -252,21 +229,18 @@ def clasificar_estado(score: int) -> str:
 # ──────────────────────────────────────────────
 
 def procesar_jobs(jobs: list[dict]) -> tuple[list[dict], list[dict]]:
-    """
-    Retorna (aprobadas, descartadas)
-    Agrega campos: score, estado, razon_descarte
-    """
     aprobadas = []
     descartadas = []
 
     for job in jobs:
-        texto = f"{job.get('cargo','')} {job.get('descripcion','')}"
+        cargo = job.get("cargo", "")
+        texto = f"{cargo} {job.get('descripcion','')}"
         descarte, razon = debe_descartar(
             texto,
             job.get("salario", ""),
             job.get("ciudad", ""),
             job.get("contrato", ""),
-            job.get("cargo", "")   # ← agregar este argumento
+            cargo
         )
 
         if descarte:
@@ -280,7 +254,6 @@ def procesar_jobs(jobs: list[dict]) -> tuple[list[dict], list[dict]]:
             job["razon_descarte"] = ""
             aprobadas.append(job)
 
-    # Ordenar por score descendente
     aprobadas.sort(key=lambda x: x["score"], reverse=True)
     return aprobadas, descartadas
 
