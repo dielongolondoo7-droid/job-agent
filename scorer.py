@@ -35,7 +35,7 @@ ESPECIALIZACION_EXCLUYENTE = re.compile(
 )
 
 # Contrato obra/
-OBRA_ = re.compile(
+OBRA_LABOR = re.compile(
     r"\b(obra\s*y?\s*labor|obra\s*o\s*labor|contrato\s*de\s*obra)\b",
     re.IGNORECASE
 )
