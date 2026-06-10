@@ -265,7 +265,7 @@ def procesar_jobs(jobs: list[dict]) -> tuple[list[dict], list[dict]]:
             texto,
             job.get("salario", ""),
             job.get("ciudad", ""),
-            job.get("contrato", "")
+            job.get("contrato", ""),
             job.get("cargo", "")   # ← agregar este argumento
         )
 
